@@ -17,7 +17,7 @@ type User = {
   id: string
   name: string
   email: string
-  password: string
+  passwordHash: string
   avatar?: string
 }
 
@@ -163,8 +163,18 @@ const statuses: TaskStatus[] = ['A fazer', 'Em andamento', 'Concluída', 'Cancel
 const nowIso = () => new Date().toISOString()
 const toDateInput = (iso = new Date().toISOString()) => iso.slice(0, 10)
 
-const uid = () =>
-  globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`
+const uid = () => {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID()
+  const bytes = new Uint8Array(16)
+  globalThis.crypto.getRandomValues(bytes)
+  return [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('')
+}
+
+const hashPassword = async (password: string) => {
+  const value = new TextEncoder().encode(password)
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', value)
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('')
+}
 
 const shiftDate = (date: string, days: number) => {
   const value = new Date(`${date}T08:00:00`)
@@ -569,22 +579,22 @@ function App() {
   if (!sessionUserId || !currentUser || !data) {
     return (
       <AuthScreen
-        onLogin={(email, password) => {
-          const found = users.find((user) => user.email === email && user.password === password)
+        onLogin={async (email, password) => {
+          const passwordHash = await hashPassword(password)
+          const found = users.find((user) => user.email === email && user.passwordHash === passwordHash)
           if (!found) {
             alert('Credenciais inválidas.')
             return
           }
-
           localStorage.setItem(SESSION_KEY, found.id)
           setSessionUserId(found.id)
         }}
-        onRegister={(name, email, password) => {
+        onRegister={async (name, email, password) => {
           if (users.some((user) => user.email === email)) {
             alert('Este e-mail já está cadastrado.')
             return
           }
-          const user = { id: uid(), name, email, password }
+          const user = { id: uid(), name, email, passwordHash: await hashPassword(password) }
           const next = [...users, user]
           saveUsers(next)
           setUsers(next)
@@ -1432,18 +1442,18 @@ function AuthScreen({
   onLogin,
   onRegister,
 }: {
-  onLogin: (email: string, password: string) => void
-  onRegister: (name: string, email: string, password: string) => void
+  onLogin: (email: string, password: string) => Promise<void> | void
+  onRegister: (name: string, email: string, password: string) => Promise<void> | void
 }) {
   const [mode, setMode] = useState<'login' | 'register'>('login')
 
-  const submit = (event: FormEvent<HTMLFormElement>) => {
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const form = new FormData(event.currentTarget)
     const email = String(form.get('email') ?? '').trim()
     const password = String(form.get('password') ?? '').trim()
-    if (mode === 'login') onLogin(email, password)
-    else onRegister(String(form.get('name') ?? '').trim(), email, password)
+    if (mode === 'login') await onLogin(email, password)
+    else await onRegister(String(form.get('name') ?? '').trim(), email, password)
   }
 
   return (
